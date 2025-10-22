@@ -1,0 +1,20 @@
+{
+  "name": "base-account-wrapper",
+  "version": "1.0.0",
+  "displayName": "Base Account Unity",
+  "description": "A Unity WebGL wrapper for the Base Account SDK, enabling Ethereum-compatible transactions with support for Base Mainnet and Sepolia.",
+  "unity": "2020.3",
+  "keywords": [
+    "web3",
+    "blockchain",
+    "ethereum",
+    "base",
+    "webgl"
+  ],
+  "author": {
+    "name": "0xdefiprof"
+  },
+  "dependencies": {},
+  "samples": [],
+  "hideInEditor": false
+}
