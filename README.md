@@ -1,6 +1,6 @@
 # Base Account Unity SDK
 
-A Unity WebGL wrapper for the official [Base Account SDK](https://github.com/base-org/account), providing seamless integration of Base Account functionality into Unity games and applications.
+A Unity WebGL wrapper around the official [Base Account SDK](https://github.com/base-org/account), providing seamless integration of Base Account functionality into Unity games and applications.
 
 ## Overview
 
