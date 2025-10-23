@@ -323,4 +323,38 @@ public class BaseSDKWrapper : MonoBehaviour
         // Examples: Update UI, trigger game events, save transaction history, etc.
         // TODO: Remove this in future updates (This is for testing purposes)
     }
+
+
+    /// <summary>
+    /// Retrieves the sub-account address
+    /// </summary>
+    public void GetSubAccount()
+    {
+        if (!isWebGL)
+        {
+            Debug.LogError("Cannot get sub-account on non-WebGL platform.");
+            return;
+        }
+        if (!isInitialized)
+        {
+            Debug.LogError("SDK not initialized. Call InitializeSDK first.");
+            return;
+        }
+
+#if UNITY_WEBGL
+    subAccountAddress = getSubAccount();
+    if (!string.IsNullOrEmpty(subAccountAddress))
+    {
+        Debug.Log($"SubAccount: {subAccountAddress}");
+    }
+    else
+    {
+        Debug.LogWarning("SubAccount not found or created.");
+    }
+#else
+        Debug.LogWarning("Sub-account retrieval is not supported on this platform.");
+#endif
+    }
+
+
 }
