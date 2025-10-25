@@ -340,14 +340,17 @@ public class BaseSDKWrapper : MonoBehaviour
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR
-        // Serialize transaction calls for JavaScript SDK
-        // Wrap calls in an object with a "calls" array for proper JSON serialization
-        string callsJson = JsonUtility.ToJson(new { calls = calls.ToArray() });
-        // Remove the outer wrapper to get just the array
-        callsJson = callsJson.Substring(9, callsJson.Length - 10); // Remove {"calls": and }
-        
-        Debug.Log($"Sending transaction with calls: {callsJson}");
-        SendTransaction(callsJson, chainIdOverride);
+    // Create a proper JSON array directly
+    string callsJson = "[";
+    for (int i = 0; i < calls.Count; i++)
+    {
+        if (i > 0) callsJson += ",";
+        callsJson += $"{{\"to\":\"{calls[i].to}\",\"data\":\"{calls[i].data}\"}}";
+    }
+    callsJson += "]";
+    
+    Debug.Log($"Sending transaction with calls: {callsJson}");
+    SendTransaction(callsJson, chainIdOverride);
 #endif
     }
 
