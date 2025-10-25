@@ -1,278 +1,325 @@
 mergeInto(LibraryManager.library, {
-  // Type definitions (inlined as comments for reference)
-  // interface BaseAccountConfig { appName: string; subAccounts?: { creation: string; defaultAccount?: string }; paymaster?: { url: string; policy: string }; }
-  // interface NetworkConfig { chainId: string; name: string; rpcUrl: string; }
-  // interface BaseAccountSDK { getProvider(): BaseAccountProvider; }
-  // interface BaseAccountProvider { request(args: { method: string; params?: any[] } | string, params?: any[]): Promise<any>; on(event: string, callback: (...args: any[]) => void): void; }
-  // interface TransactionCall { to: string; data: string; }
-  // interface SendTransactionParams { from: string; calls: TransactionCall[]; chainId?: string; version?: string; }
-
-  // Supported networks
-  NETWORKS: {
-    base: {
-      chainId: "0x" + (8453).toString(16),
-      name: "Base",
-      rpcUrl: "https://mainnet.base.org",
+  $BaseSDK: {
+    // Supported networks
+    NETWORKS: {
+      base: {
+        chainId: "0x" + (8453).toString(16),
+        name: "Base",
+        rpcUrl: "https://mainnet.base.org",
+      },
+      basesepolia: {
+        chainId: "0x" + (84532).toString(16),
+        name: "Base Sepolia",
+        rpcUrl: "https://sepolia.base.org",
+      },
     },
-    basesepolia: {
-      chainId: "0x" + (84532).toString(16),
-      name: "Base Sepolia",
-      rpcUrl: "https://sepolia.base.org",
+
+    // Global state
+    sdk: null,
+    provider: null,
+    universalAddress: null,
+    subAccountAddress: null,
+    currentNetwork: null,
+
+    // Logging function
+    log: function (message, type) {
+      if (type === undefined) type = "info";
+      console.log(`[${type.toUpperCase()}] ${message}`);
     },
-  },
 
-  // Global state
-  sdk: null,
-  provider: null,
-  universalAddress: null,
-  subAccountAddress: null,
-  currentNetwork: null,
-
-  // Logging function (compatible with Unity)
-  log: function (message, type) {
-    if (type === undefined) type = "info";
-    console.log(`[${type.toUpperCase()}] ${Pointer_stringify(message)}`);
-  },
-
-  // Load the SDK dynamically
-  loadBaseAccountSDK: function () {
-    return new Promise((resolve, reject) => {
-      if (typeof window.createBaseAccountSDK !== "undefined") {
-        resolve(window.createBaseAccountSDK);
-      } else {
-        const script = document.createElement("script");
-        script.src =
-          "https://unpkg.com/@base-org/account/dist/base-account.min.js";
-        script.onload = () => resolve(window.createBaseAccountSDK);
-        script.onerror = (e) => reject(new Error(`Failed to load SDK: ${e}`));
-        document.head.appendChild(script);
-      }
-    });
+    // Load the SDK dynamically
+    loadBaseAccountSDK: function () {
+      return new Promise((resolve, reject) => {
+        if (typeof window.createBaseAccountSDK !== "undefined") {
+          resolve(window.createBaseAccountSDK);
+        } else {
+          const script = document.createElement("script");
+          script.src =
+            "https://unpkg.com/@base-org/account/dist/base-account.min.js";
+          script.onload = () => resolve(window.createBaseAccountSDK);
+          script.onerror = (e) => reject(new Error(`Failed to load SDK: ${e}`));
+          document.head.appendChild(script);
+        }
+      });
+    },
   },
 
   // Initialize SDK with network and configuration
-  initSDK: function (configJson, network, customRpcUrl) {
-    return new Promise(async (resolve) => {
-      try {
-        const config = JSON.parse(Pointer_stringify(configJson));
-        log(`Initializing SDK for network: ${Pointer_stringify(network)}...`);
-        if (!NETWORKS[network.toLowerCase()]) {
-          log(
-            `Unsupported network: ${Pointer_stringify(
-              network
-            )}. Use 'base' or 'basesepolia'.`,
-            "error"
-          );
-          resolve(false);
-          return;
-        }
-        currentNetwork = Object.assign({}, NETWORKS[network.toLowerCase()]);
-        if (customRpcUrl) {
-          log(`Overriding RPC URL with: ${Pointer_stringify(customRpcUrl)}`);
-          currentNetwork.rpcUrl = Pointer_stringify(customRpcUrl);
-        }
-        log("Loading Base Account SDK...");
-        const createSDK = await loadBaseAccountSDK();
-        sdk = createSDK(
-          Object.assign(Object.assign({}, config), {
-            subAccounts: config.subAccounts || {
-              creation: "on-connect",
-              defaultAccount: "sub",
-            },
-            paymaster: config.paymaster || {
-              url: "https://paymaster.base.org",
-              policy: "VERIFYING_PAYMASTER",
-            },
-          })
+  InitSDK__deps: ["$BaseSDK"],
+  InitSDK: function (configJson, network, customRpcUrl) {
+    const configStr = UTF8ToString(configJson);
+    const networkStr = UTF8ToString(network);
+    const customRpcUrlStr = customRpcUrl ? UTF8ToString(customRpcUrl) : null;
+
+    BaseSDK.log(`Initializing SDK for network: ${networkStr}...`);
+
+    const config = JSON.parse(configStr);
+    const networkKey = networkStr.toLowerCase();
+
+    if (!BaseSDK.NETWORKS[networkKey]) {
+      BaseSDK.log(
+        `Unsupported network: ${networkStr}. Use 'base' or 'basesepolia'.`,
+        "error"
+      );
+      return;
+    }
+
+    BaseSDK.currentNetwork = Object.assign({}, BaseSDK.NETWORKS[networkKey]);
+
+    if (customRpcUrlStr) {
+      BaseSDK.log(`Overriding RPC URL with: ${customRpcUrlStr}`);
+      BaseSDK.currentNetwork.rpcUrl = customRpcUrlStr;
+    }
+
+    BaseSDK.log("Loading Base Account SDK...");
+
+    BaseSDK.loadBaseAccountSDK()
+      .then((createSDK) => {
+        const sdkConfig = {
+          appName: config.appName,
+          subAccounts: config.subAccounts || {
+            creation: "on-connect",
+            defaultAccount: "sub",
+          },
+          paymaster: config.paymaster || {
+            url: "https://paymaster.base.org",
+            policy: "VERIFYING_PAYMASTER",
+          },
+        };
+
+        BaseSDK.sdk = createSDK(sdkConfig);
+        BaseSDK.provider = BaseSDK.sdk.getProvider();
+        BaseSDK.log(
+          `SDK initialized successfully for ${BaseSDK.currentNetwork.name}!`
         );
-        provider = sdk.getProvider();
-        log(`SDK initialized successfully for ${currentNetwork.name}!`);
-        resolve(true);
-      } catch (error) {
-        log(
-          `Error initializing SDK: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          "error"
-        );
-        resolve(false);
-      }
-    });
+
+        // Notify Unity that initialization is complete
+        SendMessage("BaseSDKWrapper", "OnSDKInitialized", "success");
+      })
+      .catch((error) => {
+        BaseSDK.log(`Error initializing SDK: ${error.message}`, "error");
+        SendMessage("BaseSDKWrapper", "OnSDKInitialized", "failed");
+      });
   },
 
   // Connect wallet and retrieve accounts
-  connectWallet: function () {
-    return new Promise(async (resolve) => {
-      if (!provider) {
-        log("SDK not initialized. Call initSDK first.", "error");
-        resolve([]);
-        return;
-      }
-      try {
-        log("Requesting accounts...");
-        const addresses = await provider.request({
-          method: "eth_requestAccounts",
-        });
-        universalAddress = addresses[0];
-        subAccountAddress = addresses[1];
-        log(`✅ Connected!`);
-        log(`Universal Address: ${universalAddress}`);
-        if (subAccountAddress) {
-          log(`SubAccount Address: ${subAccountAddress}`);
+  ConnectWallet__deps: ["$BaseSDK"],
+  ConnectWallet: function () {
+    if (!BaseSDK.provider) {
+      BaseSDK.log("SDK not initialized. Call InitSDK first.", "error");
+      SendMessage("BaseSDKWrapper", "OnWalletConnected", "");
+      return;
+    }
+
+    BaseSDK.log("Requesting accounts...");
+
+    BaseSDK.provider
+      .request({ method: "eth_requestAccounts" })
+      .then((addresses) => {
+        BaseSDK.universalAddress = addresses[0];
+        BaseSDK.subAccountAddress = addresses[1];
+
+        BaseSDK.log(`✅ Connected!`);
+        BaseSDK.log(`Universal Address: ${BaseSDK.universalAddress}`);
+
+        if (BaseSDK.subAccountAddress) {
+          BaseSDK.log(`SubAccount Address: ${BaseSDK.subAccountAddress}`);
         }
-        provider.on("accountsChanged", (accounts) => {
-          log(`Accounts changed: ${accounts.join(", ")}`);
-          universalAddress = accounts[0];
-          subAccountAddress = accounts[1] || null;
+
+        // Set up event listeners
+        BaseSDK.provider.on("accountsChanged", (accounts) => {
+          BaseSDK.log(`Accounts changed: ${accounts.join(", ")}`);
+          BaseSDK.universalAddress = accounts[0];
+          BaseSDK.subAccountAddress = accounts[1] || null;
         });
-        provider.on("chainChanged", (chainId) => {
-          log(`Chain changed: ${chainId}`);
-          if (currentNetwork && chainId !== currentNetwork.chainId) {
-            log(
-              `Warning: Chain ID mismatch. Expected ${currentNetwork.chainId}`,
+
+        BaseSDK.provider.on("chainChanged", (chainId) => {
+          BaseSDK.log(`Chain changed: ${chainId}`);
+          if (
+            BaseSDK.currentNetwork &&
+            chainId !== BaseSDK.currentNetwork.chainId
+          ) {
+            BaseSDK.log(
+              `Warning: Chain ID mismatch. Expected ${BaseSDK.currentNetwork.chainId}`,
               "warning"
             );
           }
         });
-        resolve(addresses);
-      } catch (error) {
-        log(
-          `Error connecting wallet: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          "error"
-        );
-        resolve([]);
-      }
-    });
+
+        // Send addresses back to Unity as JSON
+        const addressesJson = JSON.stringify(addresses);
+        SendMessage("BaseSDKWrapper", "OnWalletConnected", addressesJson);
+      })
+      .catch((error) => {
+        BaseSDK.log(`Error connecting wallet: ${error.message}`, "error");
+        SendMessage("BaseSDKWrapper", "OnWalletConnected", "");
+      });
   },
 
-  // Get sub-account (manual step, as auto-creation is in config)
-  getSubAccount: function () {
-    return new Promise(async (resolve) => {
-      if (!provider || !universalAddress) {
-        log("Wallet not connected or SDK not initialized.", "error");
-        resolve(null);
-        return;
-      }
-      try {
-        log("Fetching SubAccount...");
-        const result = await provider.request({
-          method: "wallet_getSubAccounts",
-          params: [
-            { account: universalAddress, domain: window.location.origin },
-          ],
-        });
+  // Get sub-account
+  GetSubAccount__deps: ["$BaseSDK"],
+  GetSubAccount: function () {
+    if (!BaseSDK.provider || !BaseSDK.universalAddress) {
+      BaseSDK.log("Wallet not connected or SDK not initialized.", "error");
+      SendMessage("BaseSDKWrapper", "OnSubAccountRetrieved", "");
+      return;
+    }
+
+    BaseSDK.log("Fetching SubAccount...");
+
+    BaseSDK.provider
+      .request({
+        method: "wallet_getSubAccounts",
+        params: [
+          { account: BaseSDK.universalAddress, domain: window.location.origin },
+        ],
+      })
+      .then((result) => {
         if (result.subAccounts && result.subAccounts.length > 0) {
-          subAccountAddress = result.subAccounts[0].address;
-          log(`✅ SubAccount found: ${subAccountAddress}`);
+          BaseSDK.subAccountAddress = result.subAccounts[0].address;
+          BaseSDK.log(`✅ SubAccount found: ${BaseSDK.subAccountAddress}`);
+          SendMessage(
+            "BaseSDKWrapper",
+            "OnSubAccountRetrieved",
+            BaseSDK.subAccountAddress
+          );
         } else {
-          log("No SubAccount exists. Creating one...");
-          await provider.request({
-            method: "wallet_addSubAccount",
-            params: [{ version: "1" }],
-          });
-          const newResult = await provider.request({
-            method: "wallet_getSubAccounts",
-            params: [
-              { account: universalAddress, domain: window.location.origin },
-            ],
-          });
-          if (newResult.subAccounts && newResult.subAccounts.length > 0) {
-            subAccountAddress = newResult.subAccounts[0].address;
-            log(`✅ SubAccount created: ${subAccountAddress}`);
-          }
+          BaseSDK.log("No SubAccount exists. Creating one...");
+          return BaseSDK.provider
+            .request({
+              method: "wallet_addSubAccount",
+              params: [{ version: "1" }],
+            })
+            .then(() => {
+              return BaseSDK.provider.request({
+                method: "wallet_getSubAccounts",
+                params: [
+                  {
+                    account: BaseSDK.universalAddress,
+                    domain: window.location.origin,
+                  },
+                ],
+              });
+            })
+            .then((newResult) => {
+              if (newResult.subAccounts && newResult.subAccounts.length > 0) {
+                BaseSDK.subAccountAddress = newResult.subAccounts[0].address;
+                BaseSDK.log(
+                  `✅ SubAccount created: ${BaseSDK.subAccountAddress}`
+                );
+                SendMessage(
+                  "BaseSDKWrapper",
+                  "OnSubAccountRetrieved",
+                  BaseSDK.subAccountAddress
+                );
+              }
+            });
         }
-        resolve(subAccountAddress);
-      } catch (error) {
-        log(
-          `Error getting SubAccount: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          "error"
-        );
-        resolve(null);
-      }
-    });
+      })
+      .catch((error) => {
+        BaseSDK.log(`Error getting SubAccount: ${error.message}`, "error");
+        SendMessage("BaseSDKWrapper", "OnSubAccountRetrieved", "");
+      });
   },
 
-  // Send a generic transaction with multiple calls
-  sendTransaction: function (callsJson, chainIdOverride) {
-    return new Promise(async (resolve) => {
-      if (!provider || !subAccountAddress) {
-        log(
-          "SubAccount not available. Call connectWallet and getSubAccount first.",
-          "error"
-        );
-        resolve(null);
+  // Send transaction
+  SendTransaction__deps: ["$BaseSDK"],
+  SendTransaction: function (callsJson, chainIdOverride) {
+    if (!BaseSDK.provider || !BaseSDK.subAccountAddress) {
+      BaseSDK.log(
+        "SubAccount not available. Call ConnectWallet and GetSubAccount first.",
+        "error"
+      );
+      SendMessage("BaseSDKWrapper", "OnTransactionComplete", "");
+      return;
+    }
+
+    const callsStr = UTF8ToString(callsJson);
+    const chainIdStr = chainIdOverride ? UTF8ToString(chainIdOverride) : null;
+    const calls = JSON.parse(callsStr);
+
+    if (!calls || calls.length === 0) {
+      BaseSDK.log("No calls provided!", "error");
+      SendMessage("BaseSDKWrapper", "OnTransactionComplete", "");
+      return;
+    }
+
+    BaseSDK.log(
+      `Sending transaction with ${calls.length} calls from SubAccount...`
+    );
+
+    // Validate calls
+    for (const call of calls) {
+      if (!call.to || !call.to.match(/^0x[a-fA-F0-9]{40}$/)) {
+        BaseSDK.log(`Invalid 'to' address in call: ${call.to}`, "error");
+        SendMessage("BaseSDKWrapper", "OnTransactionComplete", "");
         return;
       }
-      const calls = JSON.parse(Pointer_stringify(callsJson));
-      if (!calls || calls.length === 0) {
-        log("No calls provided!", "error");
-        resolve(null);
+      if (!call.data || !/^(0x)?[a-fA-F0-9]*$/.test(call.data)) {
+        BaseSDK.log(`Invalid 'data' in call: ${call.data}`, "error");
+        SendMessage("BaseSDKWrapper", "OnTransactionComplete", "");
         return;
       }
-      try {
-        log(
-          `Sending transaction with ${calls.length} calls from SubAccount...`
-        );
-        for (const call of calls) {
-          if (!call.to.match(/^0x[a-fA-F0-9]{40}$/)) {
-            log(`Invalid 'to' address in call: ${call.to}`, "error");
-            resolve(null);
-            return;
-          }
-          if (!/^(0x)?[a-fA-F0-9]+$/.test(call.data)) {
-            log(`Invalid 'data' in call: ${call.data}`, "error");
-            resolve(null);
-            return;
-          }
-        }
-        const chainId =
-          chainIdOverride ||
-          (await provider.request({ method: "eth_chainId" }));
+    }
+
+    BaseSDK.provider
+      .request({ method: "eth_chainId" })
+      .then((currentChainId) => {
+        const chainId = chainIdStr || currentChainId;
+
         if (
           !chainId ||
-          !Object.values(NETWORKS).some((net) => net.chainId === chainId)
+          !Object.values(BaseSDK.NETWORKS).some(
+            (net) => net.chainId === chainId
+          )
         ) {
-          log(
+          BaseSDK.log(
             `Unsupported chainId: ${chainId}. Use Base or Base Sepolia.`,
             "error"
           );
-          resolve(null);
+          SendMessage("BaseSDKWrapper", "OnTransactionComplete", "");
           return;
         }
+
         const txParams = {
-          from: subAccountAddress,
+          from: BaseSDK.subAccountAddress,
           chainId: chainId,
           version: "1",
           calls: calls,
         };
-        log(`Transaction params: ${JSON.stringify(txParams)}`);
-        const txHash = await provider.request({
+
+        BaseSDK.log(`Transaction params: ${JSON.stringify(txParams)}`);
+
+        return BaseSDK.provider.request({
           method: "wallet_sendCalls",
           params: [txParams],
         });
-        log(`✅ Transaction sent!`);
-        log(`Transaction Hash: ${txHash}`);
-        log(`View on BaseScan: https://sepolia.basescan.org/tx/${txHash}`);
-        resolve(txHash);
-      } catch (error) {
-        log(
-          `Error sending transaction: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          "error"
+      })
+      .then((txHash) => {
+        BaseSDK.log(`✅ Transaction sent!`);
+        BaseSDK.log(`Transaction Hash: ${txHash}`);
+        BaseSDK.log(
+          `View on BaseScan: https://sepolia.basescan.org/tx/${txHash}`
         );
+        SendMessage("BaseSDKWrapper", "OnTransactionComplete", txHash);
+      })
+      .catch((error) => {
+        BaseSDK.log(`Error sending transaction: ${error.message}`, "error");
         console.error(error);
-        resolve(null);
-      }
-    });
+        SendMessage("BaseSDKWrapper", "OnTransactionComplete", "");
+      });
   },
 
   // Get current network information
-  getCurrentNetwork: function () {
-    return currentNetwork ? JSON.stringify(currentNetwork) : null;
+  GetCurrentNetworkJSON__deps: ["$BaseSDK"],
+  GetCurrentNetworkJSON: function () {
+    if (!BaseSDK.currentNetwork) {
+      return null;
+    }
+    const json = JSON.stringify(BaseSDK.currentNetwork);
+    const bufferSize = lengthBytesUTF8(json) + 1;
+    const buffer = _malloc(bufferSize);
+    stringToUTF8(json, buffer, bufferSize);
+    return buffer;
   },
 });
