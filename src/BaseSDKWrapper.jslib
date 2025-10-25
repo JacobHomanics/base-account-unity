@@ -265,8 +265,66 @@ mergeInto(LibraryManager.library, {
     BaseSDK.provider
       .request({ method: "eth_chainId" })
       .then((currentChainId) => {
-        const chainId = chainIdStr || currentChainId;
+        const targetChainId = chainIdStr || BaseSDK.currentNetwork.chainId;
 
+        // Check if we need to switch networks
+        if (currentChainId !== targetChainId) {
+          BaseSDK.log(
+            `Wrong network detected (${currentChainId}). Switching to ${BaseSDK.currentNetwork.name}...`
+          );
+
+          return BaseSDK.provider
+            .request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: targetChainId }],
+            })
+            .then(() => {
+              BaseSDK.log(`✅ Switched to ${BaseSDK.currentNetwork.name}`);
+              return targetChainId;
+            })
+            .catch((switchError) => {
+              // If network doesn't exist in wallet, try to add it
+              if (switchError.code === 4902) {
+                BaseSDK.log(
+                  `Network not found in wallet. Adding ${BaseSDK.currentNetwork.name}...`
+                );
+
+                return BaseSDK.provider
+                  .request({
+                    method: "wallet_addEthereumChain",
+                    params: [
+                      {
+                        chainId: BaseSDK.currentNetwork.chainId,
+                        chainName: BaseSDK.currentNetwork.name,
+                        rpcUrls: [BaseSDK.currentNetwork.rpcUrl],
+                        nativeCurrency: {
+                          name: "Ethereum",
+                          symbol: "ETH",
+                          decimals: 18,
+                        },
+                        blockExplorerUrls: [
+                          BaseSDK.currentNetwork.chainId === "0x14a34"
+                            ? "https://sepolia.basescan.org"
+                            : "https://basescan.org",
+                        ],
+                      },
+                    ],
+                  })
+                  .then(() => {
+                    BaseSDK.log(
+                      `✅ Added and switched to ${BaseSDK.currentNetwork.name}`
+                    );
+                    return targetChainId;
+                  });
+              }
+              throw switchError;
+            });
+        }
+
+        return targetChainId;
+      })
+      .then((chainId) => {
+        // Validate chainId is supported
         if (
           !chainId ||
           !Object.values(BaseSDK.NETWORKS).some(
@@ -278,7 +336,7 @@ mergeInto(LibraryManager.library, {
             "error"
           );
           SendMessage("BaseSDKWrapper", "OnTransactionComplete", "");
-          return;
+          return Promise.reject(new Error("Unsupported chain"));
         }
 
         const txParams = {
