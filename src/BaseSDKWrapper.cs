@@ -1,117 +1,148 @@
-/*
- * BaseSDKWrapper.cs
- * 
- * Unity WebGL wrapper for Base Account SDK integration
- * 
- * This script provides a Unity-friendly interface to interact with the Base Account SDK
- * through JavaScript interop. It handles SDK initialization, wallet connection, sub-account
- * management, and transaction sending on any Ethereum-compatible network.
- * For now, we will support only Base Sepolia and Base Mainnet. (Support for other networks will be added later)
- * 
- * Key Features:
- * - WebGL-only support with automatic platform detection
- * - Configurable network settings (Base Mainnet/Sepolia)
- * - Custom RPC URL support for testing environments
- * - Paymaster integration for gasless transactions
- * - Sub-account creation and management
- * - Transaction sending with multiple call support
- * - Event-driven architecture for transaction completion
- * 
- * Usage:
- * 1. Attach this script to a GameObject in your Unity scene
- * 2. Configure the SDK settings in the inspector
- * 3. The SDK will automatically initialize on Start() for WebGL builds
- * 4. Subscribe to OnTransactionSent event for transaction completion handling
- * 
- * Dependencies:
- * - Base Account SDK jslib wrapper (BaseSDKWrapper.jslib)
- * - Unity WebGL platform
- * - Internet connection for SDK loading
- */
-
 using UnityEngine;
 using System.Runtime.InteropServices;
 using System;
 using System.Collections.Generic;
 
+/// <summary>
+/// Unity wrapper for Base SDK integration in WebGL builds.
+/// Provides functionality to initialize the Base SDK, connect wallets, manage sub-accounts,
+/// and send transactions through JavaScript interop.
+/// 
+/// Key Features:
+/// - SDK initialization with configurable app settings
+/// - Wallet connection and address management
+/// - Sub-account creation and retrieval
+/// - Transaction sending with multiple calls support
+/// - Event-driven architecture for async operations
+/// - WebGL-only platform support with fallback warnings
+/// </summary>
 public class BaseSDKWrapper : MonoBehaviour
 {
     [Header("SDK Configuration")]
-    [SerializeField] private string appName = "My Unity Game"; // Application name for Base Account SDK
-    [SerializeField] private string network = "basesepolia"; // Network to connect to: "base" or "basesepolia"
-    [SerializeField] private string customRpcUrl = ""; // Optional custom RPC URL override
-    [SerializeField] private string paymasterUrl = "https://paymaster.base.org"; // Paymaster service URL for gasless transactions
-    [SerializeField] private string paymasterPolicy = "VERIFYING_PAYMASTER"; // Paymaster policy type
-
-    [Header("Transaction Settings")]
-    [SerializeField]
-    private List<TransactionCall> defaultCalls = new List<TransactionCall>
-    {
-        new TransactionCall { To = "0xYourContractAddress", Data = "0xYourFunctionData" }
-    };
+    [SerializeField] private string appName = "My Unity Game";           // Application name for SDK identification
+    [SerializeField] private string network = "basesepolia";             // Base network to connect to
+    [SerializeField] private string customRpcUrl = "";                  // Optional custom RPC endpoint
+    [SerializeField] private string paymasterUrl = "https://paymaster.base.org";  // Paymaster service URL
+    [SerializeField] private string paymasterPolicy = "VERIFYING_PAYMASTER";      // Paymaster policy type
 
     /// <summary>
-    /// Represents a single transaction call with target contract and encoded function data
+    /// Represents a single transaction call with target address and data payload
     /// </summary>
     [System.Serializable]
     public class TransactionCall
     {
-        public string To; // Target contract address (0x format)
-        public string Data; // Encoded function call data (0x format)
+        public string to;    // Target contract address
+        public string data;  // Encoded function call data
     }
 
-    // Runtime state variables
-    private bool isInitialized = false; // SDK initialization status
-    private string[] connectedAddresses = new string[0]; // Array of connected wallet addresses
-    private string subAccountAddress = null; // Sub-account address for transactions
-    private string currentNetworkJson = null; // Current network configuration as JSON
-    private bool isWebGL = Application.platform == RuntimePlatform.WebGLPlayer; // Platform check
-
-#if UNITY_WEBGL
     /// <summary>
-    /// JavaScript interop declarations for WebGL builds
-    /// These functions are implemented in the BaseSDKWrapper.jslib file
+    /// Container for multiple transaction calls to be sent in a single transaction
     /// </summary>
+    [System.Serializable]
+    private class TransactionCallsList
+    {
+        public List<TransactionCall> calls;
+    }
+
+    /// <summary>
+    /// Configuration object for SDK initialization containing app settings and service configs
+    /// </summary>
+    [System.Serializable]
+    private class SDKConfig
+    {
+        public string appName;                    // Application identifier
+        public SubAccountsConfig subAccounts;     // Sub-account configuration
+        public PaymasterConfig paymaster;         // Paymaster service configuration
+    }
+
+    /// <summary>
+    /// Configuration for sub-account creation and management
+    /// </summary>
+    [System.Serializable]
+    private class SubAccountsConfig
+    {
+        public string creation;       // When to create sub-accounts ("on-connect")
+        public string defaultAccount; // Default account type ("sub")
+    }
+
+    /// <summary>
+    /// Configuration for paymaster service integration
+    /// </summary>
+    [System.Serializable]
+    private class PaymasterConfig
+    {
+        public string url;    // Paymaster service endpoint
+        public string policy; // Paymaster policy type
+    }
+
+    // ===== STATE VARIABLES =====
+    private bool isInitialized = false;                    // SDK initialization status
+    private string[] connectedAddresses = new string[0];   // Array of connected wallet addresses
+    private string subAccountAddress = null;               // Current sub-account address
+    private bool isWebGL = false;                          // Platform detection flag
+
+    // ===== EVENTS =====
+    /// <summary>Fired when a transaction is successfully sent, providing the transaction hash</summary>
+    public event Action<string> OnTransactionSent;
+    /// <summary>Fired when SDK initialization completes, indicating success/failure</summary>
+    public event Action<bool> OnSDKReady;
+    /// <summary>Fired when wallet connection completes, providing connected addresses</summary>
+    public event Action<string[]> OnWalletReady;
+    /// <summary>Fired when sub-account retrieval completes, providing the sub-account address</summary>
+    public event Action<string> OnSubAccountReady;
+
+    // ===== JAVASCRIPT INTEROP DECLARATIONS =====
+    // These methods interface with the JavaScript SDK implementation in BaseSDKWrapper.jslib
+#if UNITY_WEBGL && !UNITY_EDITOR
     [DllImport("__Internal")]
-    private static extern bool initSDK(string configJson, string network, string customRpcUrl);
+    private static extern void InitSDK(string configJson, string network, string customRpcUrl);
 
     [DllImport("__Internal")]
-    private static extern string[] connectWallet();
+    private static extern void ConnectWallet();
 
     [DllImport("__Internal")]
-    private static extern string getSubAccount();
+    private static extern void GetSubAccount();
 
     [DllImport("__Internal")]
-    private static extern string sendTransaction(string callsJson, string chainIdOverride);
+    private static extern void SendTransaction(string callsJson, string chainIdOverride);
 
     [DllImport("__Internal")]
-    private static extern string getCurrentNetwork();
+    private static extern string GetCurrentNetworkJSON();
 #endif
 
-    /// <summary>
-    /// Event triggered when a transaction is successfully sent
-    /// Subscribe to this event to handle transaction completion
-    /// </summary>
-    public event Action<string> OnTransactionSent; // Triggered with txHash on success
+    // ===== UNITY LIFECYCLE METHODS =====
 
     /// <summary>
-    /// Unity lifecycle method - automatically initializes SDK on WebGL platforms
+    /// Unity Awake method - detects WebGL platform and warns if not supported
+    /// </summary>
+    void Awake()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        isWebGL = true;
+#endif
+        if (!isWebGL)
+        {
+            Debug.LogWarning("BaseSDKWrapper only works in WebGL builds.");
+        }
+    }
+
+    /// <summary>
+    /// Unity Start method - automatically initializes SDK if running on WebGL
     /// </summary>
     void Start()
     {
-        DontDestroyOnLoad(gameObject);
-        if (!isWebGL)
+        if (isWebGL)
         {
-            Debug.LogWarning("BaseSDKWrapper is only supported on WebGL. Current platform: " + Application.platform);
-            enabled = false; // Disable the script on non-WebGL platforms
-            return;
+            InitializeSDK();
         }
-        InitializeSDK();
     }
 
+    // ===== SDK INITIALIZATION =====
+
     /// <summary>
-    /// Initializes the Base Account SDK with the configured settings
-    /// Creates the SDK instance, sets up network configuration, and prepares for wallet connection
+    /// Initializes the Base SDK with configured settings.
+    /// Creates SDK configuration and calls JavaScript initialization.
+    /// Automatically triggers wallet connection upon successful initialization.
     /// </summary>
     public void InitializeSDK()
     {
@@ -120,241 +151,300 @@ public class BaseSDKWrapper : MonoBehaviour
             Debug.LogError("Cannot initialize SDK on non-WebGL platform.");
             return;
         }
-        if (isInitialized) return;
 
-#if UNITY_WEBGL
-        string configJson = JsonUtility.ToJson(new
+        if (isInitialized)
+        {
+            Debug.LogWarning("SDK already initialized.");
+            return;
+        }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        // Build SDK configuration from inspector settings
+        SDKConfig config = new SDKConfig
         {
             appName = appName,
-            subAccounts = new { creation = "on-connect", defaultAccount = "sub" },
-            paymaster = new { url = paymasterUrl, policy = paymasterPolicy }
-        });
+            subAccounts = new SubAccountsConfig
+            {
+                creation = "on-connect",      // Create sub-accounts when wallet connects
+                defaultAccount = "sub"        // Use sub-account as default
+            },
+            paymaster = new PaymasterConfig
+            {
+                url = paymasterUrl,           // Paymaster service endpoint
+                policy = paymasterPolicy      // Paymaster policy type
+            }
+        };
 
-        bool success = initSDK(configJson, network.ToLower(), string.IsNullOrEmpty(customRpcUrl) ? null : customRpcUrl);
-        if (success)
-        {
-            isInitialized = true;
-            Debug.Log($"SDK initialized for {network} with RPC: {customRpcUrl ?? "Default"}");
-            ConnectWallet();
-        }
-        else
-        {
-            Debug.LogError("Failed to initialize SDK. Check network and configuration.");
-        }
-#else
-        Debug.LogWarning("SDK initialization is not supported on this platform.");
+        string configJson = JsonUtility.ToJson(config);
+        Debug.Log($"Initializing SDK with config: {configJson}");
+        
+        // Call JavaScript SDK initialization
+        InitSDK(configJson, network, string.IsNullOrEmpty(customRpcUrl) ? null : customRpcUrl);
 #endif
     }
 
     /// <summary>
-    /// Connects to the user's wallet and retrieves account addresses
-    /// This method triggers the wallet connection UI and retrieves both universal and sub-account addresses
+    /// Callback method invoked by JavaScript when SDK initialization completes.
+    /// Updates initialization state and triggers wallet connection on success.
     /// </summary>
-    public void ConnectWallet()
+    /// <param name="result">Initialization result ("success" or error message)</param>
+    private void OnSDKInitialized(string result)
+    {
+        if (result == "success")
+        {
+            isInitialized = true;
+            Debug.Log("SDK initialized successfully!");
+            OnSDKReady?.Invoke(true);
+
+            // Auto-connect wallet after SDK init
+            ConnectWalletAsync();
+        }
+        else
+        {
+            Debug.LogError("SDK initialization failed!");
+            OnSDKReady?.Invoke(false);
+        }
+    }
+
+    // ===== WALLET CONNECTION =====
+
+    /// <summary>
+    /// Initiates wallet connection process.
+    /// Requires SDK to be initialized first.
+    /// </summary>
+    public void ConnectWalletAsync()
     {
         if (!isWebGL)
         {
             Debug.LogError("Cannot connect wallet on non-WebGL platform.");
             return;
         }
+
         if (!isInitialized)
         {
             Debug.LogError("SDK not initialized. Call InitializeSDK first.");
             return;
         }
 
-#if UNITY_WEBGL
-        connectedAddresses = connectWallet();
-        if (connectedAddresses.Length > 0)
-        {
-            Debug.Log($"Connected addresses: {string.Join(", ", connectedAddresses)}");
-            subAccountAddress = getSubAccount();
-            if (!string.IsNullOrEmpty(subAccountAddress))
-            {
-                Debug.Log($"SubAccount: {subAccountAddress}");
-            }
-            else
-            {
-                Debug.LogWarning("SubAccount not found or created.");
-            }
-            currentNetworkJson = getCurrentNetwork();
-            Debug.Log($"Current Network: {currentNetworkJson}");
-        }
-        else
-        {
-            Debug.LogError("Failed to connect wallet.");
-        }
-#else
-        Debug.LogWarning("Wallet connection is not supported on this platform.");
+#if UNITY_WEBGL && !UNITY_EDITOR
+        Debug.Log("Connecting wallet...");
+        ConnectWallet();
 #endif
     }
 
     /// <summary>
-    /// Sends a transaction with the specified contract calls
-    /// Uses the connected sub-account to send transactions with gasless functionality via paymaster
+    /// Callback method invoked by JavaScript when wallet connection completes.
+    /// Parses connected addresses and automatically retrieves sub-account.
     /// </summary>
-    /// <param name="calls">List of transaction calls to execute. If null, uses defaultCalls</param>
-    /// <param name="chainIdOverride">Optional chain ID override for cross-chain transactions</param>
-    /// <returns>Transaction hash if successful, null if failed</returns>
-    public string SendTransaction(List<TransactionCall> calls = null, string chainIdOverride = null)
+    /// <param name="addressesJson">JSON array of connected wallet addresses</param>
+    private void OnWalletConnected(string addressesJson)
+    {
+        if (string.IsNullOrEmpty(addressesJson))
+        {
+            Debug.LogError("Wallet connection failed!");
+            connectedAddresses = new string[0];
+            OnWalletReady?.Invoke(connectedAddresses);
+            return;
+        }
+
+        try
+        {
+            connectedAddresses = JsonHelper.FromJson<string>(addressesJson);
+            Debug.Log($"Wallet connected! Addresses: {string.Join(", ", connectedAddresses)}");
+            OnWalletReady?.Invoke(connectedAddresses);
+
+            // Auto-retrieve sub-account after wallet connection
+            GetSubAccountAsync();
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Error parsing addresses: {e.Message}");
+            connectedAddresses = new string[0];
+            OnWalletReady?.Invoke(connectedAddresses);
+        }
+    }
+
+    // ===== SUB-ACCOUNT MANAGEMENT =====
+
+    /// <summary>
+    /// Retrieves the current sub-account address.
+    /// Requires SDK to be initialized and wallet connected.
+    /// </summary>
+    public void GetSubAccountAsync()
+    {
+        if (!isWebGL)
+        {
+            Debug.LogError("Cannot get sub-account on non-WebGL platform.");
+            return;
+        }
+
+        if (!isInitialized)
+        {
+            Debug.LogError("SDK not initialized.");
+            return;
+        }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        Debug.Log("Retrieving sub-account...");
+        GetSubAccount();
+#endif
+    }
+
+    /// <summary>
+    /// Callback method invoked by JavaScript when sub-account retrieval completes.
+    /// Updates the sub-account address and notifies listeners.
+    /// </summary>
+    /// <param name="address">The retrieved sub-account address</param>
+    private void OnSubAccountRetrieved(string address)
+    {
+        if (string.IsNullOrEmpty(address))
+        {
+            Debug.LogError("Sub-account retrieval failed!");
+            subAccountAddress = null;
+        }
+        else
+        {
+            subAccountAddress = address;
+            Debug.Log($"Sub-account retrieved: {subAccountAddress}");
+        }
+
+        OnSubAccountReady?.Invoke(subAccountAddress);
+    }
+
+    // ===== TRANSACTION MANAGEMENT =====
+
+    /// <summary>
+    /// Sends a transaction with multiple calls to the blockchain.
+    /// Requires SDK initialization, wallet connection, and sub-account availability.
+    /// </summary>
+    /// <param name="calls">List of transaction calls to execute</param>
+    /// <param name="chainIdOverride">Optional chain ID override for the transaction</param>
+    public void SendTransactionAsync(List<TransactionCall> calls, string chainIdOverride = null)
     {
         if (!isWebGL)
         {
             Debug.LogError("Cannot send transaction on non-WebGL platform.");
-            return null;
-        }
-        if (!isInitialized || string.IsNullOrEmpty(subAccountAddress))
-        {
-            Debug.LogError("SDK not initialized or SubAccount not available. Call InitializeSDK and ConnectWallet first.");
-            return null;
+            return;
         }
 
-        calls = calls ?? defaultCalls;
+        if (!isInitialized || string.IsNullOrEmpty(subAccountAddress))
+        {
+            Debug.LogError("SDK not ready or sub-account not available.");
+            return;
+        }
+
         if (calls == null || calls.Count == 0)
         {
             Debug.LogError("No transaction calls provided.");
-            return null;
+            return;
         }
 
-#if UNITY_WEBGL
-        string callsJson = JsonUtility.ToJson(calls);
-        string txHash = sendTransaction(callsJson, chainIdOverride);
-        if (!string.IsNullOrEmpty(txHash))
-        {
-            Debug.Log($"Transaction sent. Hash: {txHash}");
-            OnTransactionSent?.Invoke(txHash); // Trigger event for subscribers
-        }
-        else
-        {
-            Debug.LogError("Transaction failed.");
-        }
-        return txHash;
-#else
-        Debug.LogWarning("Transaction sending is not supported on this platform.");
-        return null;
+#if UNITY_WEBGL && !UNITY_EDITOR
+        // Serialize transaction calls for JavaScript SDK
+        // Wrap calls in an object with a "calls" array for proper JSON serialization
+        string callsJson = JsonUtility.ToJson(new { calls = calls.ToArray() });
+        // Remove the outer wrapper to get just the array
+        callsJson = callsJson.Substring(9, callsJson.Length - 10); // Remove {"calls": and }
+        
+        Debug.Log($"Sending transaction with calls: {callsJson}");
+        SendTransaction(callsJson, chainIdOverride);
 #endif
     }
 
     /// <summary>
-    /// Retrieves the current network configuration as a JSON string
-    /// Returns network details including chain ID, name, and RPC URL
+    /// Callback method invoked by JavaScript when transaction completes.
+    /// Notifies listeners with the transaction hash on success.
     /// </summary>
-    /// <returns>JSON string containing network configuration, or null if not initialized</returns>
+    /// <param name="txHash">Transaction hash on success, empty/null on failure</param>
+    private void OnTransactionComplete(string txHash)
+    {
+        if (string.IsNullOrEmpty(txHash))
+        {
+            Debug.LogError("Transaction failed!");
+            return;
+        }
+
+        Debug.Log($"Transaction successful! Hash: {txHash}");
+        OnTransactionSent?.Invoke(txHash);
+    }
+
+    // ===== UTILITY METHODS =====
+
+    /// <summary>
+    /// Gets the current network information as JSON string.
+    /// Returns null if not running on WebGL or SDK not initialized.
+    /// </summary>
+    /// <returns>JSON string containing network information or null</returns>
     public string GetCurrentNetwork()
     {
-        if (!isWebGL)
+        if (!isWebGL || !isInitialized)
         {
-            Debug.LogError("Cannot get network on non-WebGL platform.");
-            return null;
-        }
-        if (!isInitialized)
-        {
-            Debug.LogError("SDK not initialized. Call InitializeSDK first.");
             return null;
         }
 
-#if UNITY_WEBGL
-        return currentNetworkJson ?? getCurrentNetwork();
+#if UNITY_WEBGL && !UNITY_EDITOR
+        return GetCurrentNetworkJSON();
 #else
-        Debug.LogWarning("Network retrieval is not supported on this platform.");
         return null;
 #endif
     }
 
     /// <summary>
-    /// Retrieves the currently connected wallet addresses
-    /// Returns an array of connected addresses (universal address at index 0)
+    /// Gets the array of currently connected wallet addresses.
     /// </summary>
-    /// <returns>Array of connected addresses, or empty array if not connected</returns>
+    /// <returns>Array of connected wallet addresses</returns>
     public string[] GetConnectedAddresses()
     {
-        if (!isWebGL)
-        {
-            Debug.LogError("Cannot get addresses on non-WebGL platform.");
-            return new string[0];
-        }
         return connectedAddresses;
     }
 
     /// <summary>
-    /// Retrieves the current sub-account address used for transactions
-    /// Sub-accounts enable gasless transactions and enhanced security features
+    /// Gets the current sub-account address.
     /// </summary>
-    /// <returns>Sub-account address if available, null otherwise</returns>
+    /// <returns>Sub-account address or null if not available</returns>
     public string GetSubAccountAddress()
     {
-        if (!isWebGL)
-        {
-            Debug.LogError("Cannot get sub-account on non-WebGL platform.");
-            return null;
-        }
         return subAccountAddress;
     }
 
+    /// <summary>
+    /// Checks if the SDK has been successfully initialized.
+    /// </summary>
+    /// <returns>True if SDK is initialized, false otherwise</returns>
+    public bool IsInitialized()
+    {
+        return isInitialized;
+    }
+}
+
+// ===== HELPER CLASSES =====
+
+/// <summary>
+/// Helper class for JSON array deserialization.
+/// Unity's JsonUtility doesn't support direct array deserialization,
+/// so this wrapper provides a workaround for parsing JSON arrays.
+/// </summary>
+public static class JsonHelper
+{
+    /// <summary>
+    /// Deserializes a JSON array into a typed array.
+    /// </summary>
+    /// <typeparam name="T">Type of array elements</typeparam>
+    /// <param name="json">JSON array string</param>
+    /// <returns>Array of deserialized objects</returns>
+    public static T[] FromJson<T>(string json)
+    {
+        Wrapper<T> wrapper = JsonUtility.FromJson<Wrapper<T>>("{\"Items\":" + json + "}");
+        return wrapper.Items;
+    }
 
     /// <summary>
-    /// Unity lifecycle method - subscribes to transaction events when the component is enabled
+    /// Internal wrapper class for JSON array deserialization
     /// </summary>
-    void OnEnable()
+    /// <typeparam name="T">Type of array elements</typeparam>
+    [Serializable]
+    private class Wrapper<T>
     {
-        if (!isWebGL) return;
-        OnTransactionSent += HandleTransactionSent;
+        public T[] Items;
     }
-
-    /// <summary>
-    /// Unity lifecycle method - unsubscribes from transaction events when the component is disabled
-    /// </summary>
-    void OnDisable()
-    {
-        if (!isWebGL) return;
-        OnTransactionSent -= HandleTransactionSent;
-    }
-
-    /// <summary>
-    /// Event handler for successful transaction completion
-    /// Override this method or subscribe to OnTransactionSent event for custom handling
-    /// </summary>
-    /// <param name="txHash">The transaction hash of the completed transaction</param>
-    private void HandleTransactionSent(string txHash)
-    {
-        if (!isWebGL) return;
-        Debug.Log($"Transaction completed with hash: {txHash}");
-        // Add custom transaction completion logic here
-        // Examples: Update UI, trigger game events, save transaction history, etc.
-        // TODO: Remove this in future updates (This is for testing purposes)
-    }
-
-
-    /// <summary>
-    /// Retrieves the sub-account address
-    /// </summary>
-    public void GetSubAccount()
-    {
-        if (!isWebGL)
-        {
-            Debug.LogError("Cannot get sub-account on non-WebGL platform.");
-            return;
-        }
-        if (!isInitialized)
-        {
-            Debug.LogError("SDK not initialized. Call InitializeSDK first.");
-            return;
-        }
-
-#if UNITY_WEBGL
-    subAccountAddress = getSubAccount();
-    if (!string.IsNullOrEmpty(subAccountAddress))
-    {
-        Debug.Log($"SubAccount: {subAccountAddress}");
-    }
-    else
-    {
-        Debug.LogWarning("SubAccount not found or created.");
-    }
-#else
-        Debug.LogWarning("Sub-account retrieval is not supported on this platform.");
-#endif
-    }
-
-
 }
