@@ -159,7 +159,11 @@ public class BaseSDKWrapper : MonoBehaviour
             return;
         }
 
-#if UNITY_WEBGL && !UNITY_EDITOR
+#if UNITY_WEBGL_ && UNITY_EDITOR 
+        Debug.LogError("Incorrect build target.");
+        return;
+#endif
+
         // Build SDK configuration from inspector settings
         SDKConfig config = new SDKConfig
         {
@@ -179,8 +183,12 @@ public class BaseSDKWrapper : MonoBehaviour
         string configJson = JsonUtility.ToJson(config);
         Debug.Log($"Initializing SDK with config: {configJson}");
         
+        string initRpcUrl = customRpcUrl;
+        string initNetwork = network;
+
+#if UNITY_WEBGL_ && !UNITY_EDITOR 
         // Call JavaScript SDK initialization
-        InitSDK(configJson, network, string.IsNullOrEmpty(customRpcUrl) ? null : customRpcUrl);
+        InitSDK(configJson, initNetwork, string.IsNullOrEmpty(initRpcUrl) ? null : initRpcUrl);
 #endif
     }
 
