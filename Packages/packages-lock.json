@@ -1,5 +1,11 @@
 {
   "dependencies": {
+    "base-account-wrapper": {
+      "version": "file:Base-Account",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {}
+    },
     "com.unity.2d.animation": {
       "version": "5.2.7",
       "depth": 0,
