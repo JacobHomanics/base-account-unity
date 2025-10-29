@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System;
 using System.Collections.Generic;
 
+namespace Base {
 /// <summary>
 /// Unity wrapper for Base SDK integration in WebGL builds.
 /// Provides functionality to initialize the Base SDK, connect wallets, manage sub-accounts,
@@ -451,3 +452,5 @@ public static class JsonHelper
         public T[] Items;
     }
 }
+}
+
