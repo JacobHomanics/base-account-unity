@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "displayName": "Base Account Unity",
   "description": "A Unity WebGL wrapper for the Base Account SDK, enabling Ethereum-compatible transactions with support for Base Mainnet and Sepolia.",
-  "unity": "2020.3",
+  "unity": "6000.0",
   "keywords": [
     "web3",
     "blockchain",
